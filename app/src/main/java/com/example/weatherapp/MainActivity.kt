@@ -84,7 +84,7 @@ class MainActivity : ComponentActivity() {
                 color = Color.White,
                 fontSize = 32.sp,
                 fontWeight = FontWeight.Bold,
-                modifier = Modifier.padding(top = 40.dp, btm = 8.dp)
+                modifier = Modifier.padding(top = 40.dp, bottom = 8.dp)
             )
             Text(
                 text = "设置您的每日语音提醒",
