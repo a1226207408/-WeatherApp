@@ -15,13 +15,10 @@ jobs:
       with:
         java-version: '17'
         distribution: 'temurin'
-        cache: gradle
 
-    - name: Grant execute permission for gradlew
-      run: chmod +x gradlew
-
+    # 直接使用系统自带的 gradle 编译，不需要项目里的 gradlew
     - name: Build with Gradle
-      run: ./gradlew assembleDebug
+      run: gradle assembleDebug
 
     - name: Upload APK
       uses: actions/upload-artifact@v4
