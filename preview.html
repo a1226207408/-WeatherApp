@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>智能天气播报 - 预览版</title>
+    <style>
+        :root {
+            --primary: #4FC3F7;
+            --bg-start: #1E3C72;
+            --bg-end: #2A5298;
+        }
+
+        body {
+            margin: 0;
+            padding: 0;
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            background: linear-gradient(135deg, var(--bg-start), var(--bg-end));
+            height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            color: white;
+            overflow: hidden;
+        }
+
+        .container {
+            width: 90%;
+            max-width: 400px;
+            text-align: center;
+            animation: fadeIn 1s ease-out;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(20px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        h1 {
+            font-size: 2.5rem;
+            margin-bottom: 0.5rem;
+            font-weight: 800;
+        }
+
+        p.subtitle {
+            color: rgba(255, 255, 255, 0.7);
+            margin-bottom: 3rem;
+        }
+
+        .card {
+            background: rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(20px);
+            border-radius: 2rem;
+            padding: 2.5rem;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+        }
+
+        .time-display {
+            font-size: 4.5rem;
+            font-weight: 200;
+            margin: 1.5rem 0;
+            cursor: pointer;
+            transition: transform 0.3s ease;
+        }
+
+        .time-display:hover {
+            transform: scale(1.05);
+        }
+
+        .btn {
+            width: 100%;
+            padding: 1rem;
+            border-radius: 1rem;
+            border: none;
+            font-size: 1rem;
+            font-weight: 700;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            margin-top: 1rem;
+        }
+
+        .btn-primary {
+            background: var(--primary);
+            color: white;
+            box-shadow: 0 4px 15px rgba(79, 195, 247, 0.4);
+        }
+
+        .btn-primary:active {
+            transform: scale(0.98);
+        }
+
+        .btn-outline {
+            background: transparent;
+            border: 2px solid rgba(255, 255, 255, 0.5);
+            color: white;
+        }
+
+        input[type="time"] {
+            background: rgba(255, 255, 255, 0.2);
+            border: none;
+            color: white;
+            font-size: 1.5rem;
+            padding: 0.5rem;
+            border-radius: 0.5rem;
+            margin-bottom: 1rem;
+            display: none;
+        }
+
+        #status {
+            margin-top: 1rem;
+            font-size: 0.9rem;
+            color: rgba(255, 255, 255, 0.6);
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>天气播报员</h1>
+        <p class="subtitle">您的智能晨间管家</p>
+
+        <div class="card">
+            <div style="font-size: 0.9rem; font-weight: 600; text-transform: uppercase; letter-spacing: 1px;">定时播报时间</div>
+            <div id="time-text" class="time-display">08:00</div>
+            <input type="time" id="time-picker" value="08:00">
+            
+            <button class="btn btn-primary" onclick="saveSchedule()">保存调度</button>
+            <button class="btn btn-outline" onclick="testBroadcast()">立即试听</button>
+        </div>
+
+        <div id="status">准备就绪</div>
+    </div>
+
+    <script>
+        const timeText = document.getElementById('time-text');
+        const timePicker = document.getElementById('time-picker');
+        const status = document.getElementById('status');
+
+        timeText.addEventListener('click', () => {
+            timePicker.showPicker();
+        });
+
+        timePicker.addEventListener('change', (e) => {
+            timeText.innerText = e.target.value;
+        });
+
+        function saveSchedule() {
+            const time = timePicker.value;
+            status.innerText = `已成功预约每日 ${time} 播报`;
+            status.style.color = '#4FC3F7';
+            
+            // In a real PWA, you'd use Service Workers + Web Push or Background Fetch
+            // For now, we simulate the logic
+            alert(`已设置成功！您的安卓应用将在每日 ${time} 自动为您播报天气。`);
+        }
+
+        async function testBroadcast() {
+            status.innerText = "正在获取天气资料...";
+            try {
+                // Fetch real weather for simulation
+                const res = await fetch('https://api.open-meteo.com/v1/forecast?latitude=31.2304&longitude=121.4737&current_weather=true');
+                const data = await res.json();
+                const temp = data.current_weather.temperature;
+                
+                const text = `早安！现在为您播报天气。当前位置，天气晴朗，温度 ${temp} 度。祝您今天心情愉快！`;
+                
+                status.innerText = "正在播报...";
+                const utterance = new SpeechSynthesisUtterance(text);
+                utterance.lang = 'zh-CN';
+                utterance.rate = 1.0;
+                window.speechSynthesis.speak(utterance);
+                
+                utterance.onend = () => {
+                    status.innerText = "播报完成";
+                };
+            } catch (e) {
+                status.innerText = "获取失败，请检查网络";
+            }
+        }
+    </script>
+</body>
+</html>
