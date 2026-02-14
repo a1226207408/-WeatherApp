@@ -45,7 +45,7 @@ class WeatherAlarmReceiver : BroadcastReceiver() {
             val workRequest = OneTimeWorkRequestBuilder<WeatherWorker>()
                 .setInputData(cityData)
                 .setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
-                .addTag("WeatherTask_${System.currentTimeMillis()}")
+                .addTag("WeatherAlarmTask")
                 .build()
 
             WorkManager.getInstance(context).enqueue(workRequest)

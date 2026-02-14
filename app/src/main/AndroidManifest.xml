@@ -37,6 +37,7 @@
             android:exported="false" />
 
         <receiver android:name=".WeatherAlarmReceiver" android:exported="false" />
+        <receiver android:name=".WeatherStopReceiver" android:exported="false" />
         <receiver android:name=".WeatherBootReceiver" android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.BOOT_COMPLETED" />

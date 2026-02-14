@@ -3,10 +3,13 @@ package com.example.weatherapp
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
+import android.app.PendingIntent
 import android.content.Context
+import android.content.Intent
 import android.os.Build
 import android.os.PowerManager
 import android.speech.tts.TextToSpeech
+import android.speech.tts.UtteranceProgressListener
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.work.CoroutineWorker
@@ -28,7 +31,6 @@ class WeatherWorker(context: Context, params: WorkerParameters) : CoroutineWorke
     private val CHANNEL_ID = "WeatherBroadcastChannel"
     private val NOTIFICATION_ID = 101
 
-    // Required for Expedited Work on Android versions < 12
     override suspend fun getForegroundInfo(): ForegroundInfo {
         return createForegroundInfo()
     }
@@ -38,20 +40,17 @@ class WeatherWorker(context: Context, params: WorkerParameters) : CoroutineWorke
         val lat = inputData.getDouble("lat", 39.9042)
         val lon = inputData.getDouble("lon", 116.4074)
 
-        // Force promote to foreground immediately
         try {
             setForeground(createForegroundInfo())
-            Log.d("WeatherWorker", "Foreground service started successfully")
         } catch (e: Exception) {
-            Log.e("WeatherWorker", "Failed to start foreground service", e)
-            // Even if setForeground fails, we might still be able to run as a background task
+            Log.e("WeatherWorker", "Foreground failed", e)
         }
 
         val powerManager = applicationContext.getSystemService(Context.POWER_SERVICE) as PowerManager
         val wakeLock = powerManager.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "WeatherApp:AlarmWakeLock")
         
         try {
-            wakeLock.acquire(10 * 60 * 1000L /*10 minutes*/)
+            wakeLock.acquire(10 * 60 * 1000L)
             
             val retrofit = Retrofit.Builder()
                 .baseUrl("https://api.open-meteo.com/")
@@ -65,22 +64,28 @@ class WeatherWorker(context: Context, params: WorkerParameters) : CoroutineWorke
             val description = getWeatherDescription(weather.weathercode)
             
             val greeting = getDynamicGreeting()
-            val text = "${greeting}！现在为您播报天气。当前位置：${cityName}，天气${description}，温度约为${weather.temperature}度。祝您今天在${cityName}拥有一份好心情！"
+            // Simplified Message
+            val text = "${greeting}。${cityName}今天${description}，${weather.temperature}度。祝生活愉快。"
 
-            Log.d("WeatherWorker", "Starting TTS: $text")
-            val speakResult = speakSync(text)
+            Log.d("WeatherWorker", "Starting repeating TTS")
             
-            // Wait for speech to finish (roughly)
-            delay(15000) 
+            // Repeat loop until worker is stopped (by Stop button)
+            while (!isStopped) {
+                val speakResult = speakSync(text)
+                if (!speakResult) break
+                
+                // Gap between repeats
+                delay(3000) 
+            }
 
             Result.success()
         } catch (e: Exception) {
-            Log.e("WeatherWorker", "Error in WeatherWorker execution", e)
+            Log.e("WeatherWorker", "Error", e)
             Result.retry()
         } finally {
             if (wakeLock.isHeld) wakeLock.release()
+            tts?.stop()
             tts?.shutdown()
-            Log.d("WeatherWorker", "Worker finished and cleaned up")
         }
     }
 
@@ -97,48 +102,53 @@ class WeatherWorker(context: Context, params: WorkerParameters) : CoroutineWorke
 
     private suspend fun speakSync(text: String): Boolean = withContext(Dispatchers.Main) {
         suspendCancellableCoroutine { continuation ->
-            var initialized = false
             tts = TextToSpeech(applicationContext) { status ->
                 if (status == TextToSpeech.SUCCESS) {
-                    tts?.language = Locale.CHINESE
-                    // Some TTS engines take a moment to be actually ready for speech
-                    val result = tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, "WeatherSpeak")
-                    if (result == TextToSpeech.SUCCESS) {
-                        initialized = true
-                        continuation.resume(true)
-                    } else {
-                        if (!initialized) continuation.resume(false)
+                    tts?.let { t ->
+                        t.language = Locale.CHINESE
+                        // Adjust pitch and rate for more natural sound
+                        t.setPitch(1.1f)     // Slightly higher pitch for "human" feel
+                        t.setSpeechRate(0.95f) // Slightly slower for clarity
+                        
+                        t.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
+                            override fun onStart(utteranceId: String?) {}
+                            override fun onDone(utteranceId: String?) {
+                                if (continuation.isActive) continuation.resume(true)
+                            }
+                            override fun onError(utteranceId: String?) {
+                                if (continuation.isActive) continuation.resume(false)
+                            }
+                        })
+                        
+                        val result = t.speak(text, TextToSpeech.QUEUE_FLUSH, null, "WeatherSpeak")
+                        if (result != TextToSpeech.SUCCESS && continuation.isActive) {
+                            continuation.resume(false)
+                        }
                     }
                 } else {
-                    if (!initialized) continuation.resume(false)
+                    if (continuation.isActive) continuation.resume(false)
                 }
             }
         }
     }
 
     private fun createForegroundInfo(): ForegroundInfo {
-        val title = "智能天气播报中"
-        val content = "正在为您提供实时语音天气速报"
-
-        val manager = applicationContext.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val channel = NotificationChannel(CHANNEL_ID, "天气播报服务", NotificationManager.IMPORTANCE_HIGH).apply {
-                description = "确保天气闹钟在后台准时运行"
-                enableVibration(true)
-                lockscreenVisibility = Notification.VISIBILITY_PUBLIC
-            }
-            manager.createNotificationChannel(channel)
-        }
+        val stopIntent = Intent(applicationContext, WeatherStopReceiver::class.java)
+        val stopPendingIntent = PendingIntent.getBroadcast(
+            applicationContext,
+            0,
+            stopIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
 
         val notification = NotificationCompat.Builder(applicationContext, CHANNEL_ID)
-            .setContentTitle(title)
-            .setContentText(content)
+            .setContentTitle("天气播报闹钟运行中")
+            .setContentText("点击下方按钮停止播报")
             .setSmallIcon(android.R.drawable.ic_lock_idle_alarm)
             .setPriority(NotificationCompat.PRIORITY_MAX)
             .setCategory(NotificationCompat.CATEGORY_ALARM)
-            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
             .setOngoing(true)
-            .setAutoCancel(false)
+            .addAction(android.R.drawable.ic_menu_close_clear_cancel, "停止播报", stopPendingIntent)
             .build()
 
         return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
