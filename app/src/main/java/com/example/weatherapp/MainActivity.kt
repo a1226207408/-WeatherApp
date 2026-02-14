@@ -21,12 +21,13 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.work.*
-import com.google.android.gms.location.LocationServices
-import com.google.android.gms.location.Priority
-import com.google.android.gms.tasks.CancellationTokenSource
 import android.Manifest
+import android.content.Context
 import android.content.pm.PackageManager
 import android.location.Geocoder
+import android.location.LocationManager
+import android.location.LocationListener
+import android.location.Location
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
@@ -60,8 +61,15 @@ class MainActivity : ComponentActivity() {
     private fun getCityFromLocation(lat: Double, lon: Double): String {
         return try {
             val geocoder = Geocoder(this, Locale.CHINA)
+            // Note: On some devices in China, Geocoder might fail if Google integration is broken.
+            // But usually, domestic ROMs (Xiaomi/Huawei) provide their own backend.
             val addresses = geocoder.getFromLocation(lat, lon, 1)
-            addresses?.get(0)?.locality ?: addresses?.get(0)?.subAdminArea ?: "当前位置"
+            if (!addresses.isNullOrEmpty()) {
+                val address = addresses[0]
+                address.locality ?: address.subAdminArea ?: address.adminArea ?: "未知城市"
+            } else {
+                "当前位置"
+            }
         } catch (e: Exception) {
             "当前位置"
         }
@@ -72,7 +80,6 @@ class MainActivity : ComponentActivity() {
     fun WeatherDashboard() {
         val schedules = remember { mutableStateListOf<AlarmSchedule>() }
         
-        // Load persistent schedules on start
         LaunchedEffect(Unit) {
             schedules.addAll(AlarmStorage.getSchedules(this@MainActivity))
         }
@@ -146,25 +153,19 @@ class MainActivity : ComponentActivity() {
 
         if (showAddDialog) {
             var showCitySelector by remember { mutableStateOf(false) }
-            val scope = rememberCoroutineScope()
             val context = this@MainActivity
-            val fusedLocationClient = remember { LocationServices.getFusedLocationProviderClient(context) }
+            var isLocating by remember { mutableStateOf(false) }
             
             val locationPermissionLauncher = rememberLauncherForActivityResult(
                 ActivityResultContracts.RequestPermission()
             ) { isGranted ->
                 if (isGranted) {
-                    scope.launch {
-                        try {
-                            fusedLocationClient.getCurrentLocation(Priority.PRIORITY_HIGH_ACCURACY, CancellationTokenSource().token)
-                                .addOnSuccessListener { location ->
-                                    location?.let {
-                                        val detectedCityName = getCityFromLocation(it.latitude, it.longitude)
-                                        tempCity = City(detectedCityName, it.latitude, it.longitude)
-                                    }
-                                }
-                        } catch (e: Exception) {}
+                    performNativeLocationUpdate(context) { city ->
+                        tempCity = city
+                        isLocating = false
                     }
+                } else {
+                    isLocating = false
                 }
             }
 
@@ -184,20 +185,25 @@ class MainActivity : ComponentActivity() {
                                 Spacer(modifier = Modifier.width(4.dp))
                                 Text(tempCity.name, maxLines = 1)
                             }
-                            IconButton(onClick = {
-                                if (ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED) {
-                                    fusedLocationClient.getCurrentLocation(Priority.PRIORITY_HIGH_ACCURACY, CancellationTokenSource().token)
-                                        .addOnSuccessListener { location ->
-                                            location?.let {
-                                                val name = getCityFromLocation(it.latitude, it.longitude)
-                                                tempCity = City(name, it.latitude, it.longitude)
-                                            }
+                            IconButton(
+                                onClick = {
+                                    isLocating = true
+                                    if (ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED) {
+                                        performNativeLocationUpdate(context) { city ->
+                                            tempCity = city
+                                            isLocating = false
                                         }
+                                    } else {
+                                        locationPermissionLauncher.launch(Manifest.permission.ACCESS_FINE_LOCATION)
+                                    }
+                                },
+                                enabled = !isLocating
+                            ) {
+                                if (isLocating) {
+                                    CircularProgressIndicator(modifier = Modifier.size(24.dp), strokeWidth = 2.dp)
                                 } else {
-                                    locationPermissionLauncher.launch(Manifest.permission.ACCESS_FINE_LOCATION)
+                                    Icon(Icons.Default.MyLocation, contentDescription = null)
                                 }
-                            }) {
-                                Icon(Icons.Default.MyLocation, contentDescription = null)
                             }
                         }
                     }
@@ -235,6 +241,42 @@ class MainActivity : ComponentActivity() {
                     },
                     confirmButton = {}
                 )
+            }
+        }
+    }
+
+    private fun performNativeLocationUpdate(context: Context, onCityDetected: (City) -> Unit) {
+        val locationManager = context.getSystemService(Context.LOCATION_SERVICE) as LocationManager
+        val provider = if (locationManager.isProviderEnabled(LocationManager.NETWORK_PROVIDER)) {
+            LocationManager.NETWORK_PROVIDER
+        } else if (locationManager.isProviderEnabled(LocationManager.GPS_PROVIDER)) {
+            LocationManager.GPS_PROVIDER
+        } else {
+            null
+        }
+
+        if (provider != null) {
+            try {
+                // Try to get last known location first for speed
+                val lastKnown = locationManager.getLastKnownLocation(provider)
+                if (lastKnown != null) {
+                    val name = getCityFromLocation(lastKnown.latitude, lastKnown.longitude)
+                    onCityDetected(City(name, lastKnown.latitude, lastKnown.longitude))
+                }
+
+                // Request one fresh update
+                locationManager.requestLocationUpdates(provider, 0L, 0f, object : LocationListener {
+                    override fun onLocationChanged(location: Location) {
+                        val name = getCityFromLocation(location.latitude, location.longitude)
+                        onCityDetected(City(name, location.latitude, location.longitude))
+                        locationManager.removeUpdates(this)
+                    }
+                    override fun onStatusChanged(p0: String?, p1: Int, p2: Bundle?) {}
+                    override fun onProviderEnabled(p0: String) {}
+                    override fun onProviderDisabled(p0: String) {}
+                })
+            } catch (e: SecurityException) {
+                // Handle permission issue
             }
         }
     }
