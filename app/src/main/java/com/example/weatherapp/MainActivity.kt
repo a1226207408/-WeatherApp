@@ -10,10 +10,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.LocationOn
-import androidx.compose.material.icons.filled.Schedule
+import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -32,9 +29,7 @@ import android.content.pm.PackageManager
 import android.location.Geocoder
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.material.icons.filled.MyLocation
 import androidx.core.content.ContextCompat
-import java.util.concurrent.TimeUnit
 import java.util.*
 import kotlinx.coroutines.launch
 
@@ -62,37 +57,6 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun scheduleWeatherTask(hour: Int, minute: Int, city: City) {
-        val currentDate = Calendar.getInstance()
-        val dueDate = Calendar.getInstance()
-
-        dueDate.set(Calendar.HOUR_OF_DAY, hour)
-        dueDate.set(Calendar.MINUTE, minute)
-        dueDate.set(Calendar.SECOND, 0)
-
-        if (dueDate.before(currentDate)) {
-            dueDate.add(Calendar.HOUR_OF_DAY, 24)
-        }
-
-        val timeDiff = dueDate.timeInMillis - currentDate.timeInMillis
-        val cityData = workDataOf("cityName" to city.name, "lat" to city.lat, "lon" to city.lon)
-
-        val uniqueName = "WeatherAlarm_${hour}_${minute}"
-        
-        val weatherRequest = PeriodicWorkRequestBuilder<WeatherWorker>(24, TimeUnit.HOURS)
-            .setInitialDelay(timeDiff, TimeUnit.MILLISECONDS)
-            .setInputData(cityData)
-            .setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build())
-            .addTag("WeatherAlarm")
-            .build()
-
-        WorkManager.getInstance(applicationContext).enqueueUniquePeriodicWork(
-            uniqueName,
-            ExistingPeriodicWorkPolicy.REPLACE,
-            weatherRequest
-        )
-    }
-
     private fun getCityFromLocation(lat: Double, lon: Double): String {
         return try {
             val geocoder = Geocoder(this, Locale.CHINA)
@@ -103,19 +67,17 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun cancelWeatherTask(hour: Int, minute: Int) {
-        val uniqueName = "WeatherAlarm_${hour}_${minute}"
-        WorkManager.getInstance(applicationContext).cancelUniqueWork(uniqueName)
-    }
-
     @OptIn(ExperimentalMaterial3Api::class)
     @Composable
     fun WeatherDashboard() {
         val schedules = remember { mutableStateListOf<AlarmSchedule>() }
-        var showAddDialog by remember { mutableStateOf(false) }
         
-        var tempHour by remember { mutableIntStateOf(8) }
-        var tempMinute by remember { mutableIntStateOf(0) }
+        // Load persistent schedules on start
+        LaunchedEffect(Unit) {
+            schedules.addAll(AlarmStorage.getSchedules(this@MainActivity))
+        }
+
+        var showAddDialog by remember { mutableStateOf(false) }
         var tempCity by remember { mutableStateOf(presetCities[0]) }
         val timePickerState = rememberTimePickerState(initialHour = 8, initialMinute = 0)
 
@@ -127,21 +89,20 @@ class MainActivity : ComponentActivity() {
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             Text(
-                text = "智能播报管家",
+                text = "超级天气闹钟",
                 color = Color.White,
                 fontSize = 28.sp,
                 fontWeight = FontWeight.Bold,
                 modifier = Modifier.padding(top = 40.dp, bottom = 4.dp)
             )
             Text(
-                text = "支持设置多个播报时段",
+                text = "系统级精准播报 · 全天候运行",
                 color = Color.White.copy(alpha = 0.6f),
                 fontSize = 14.sp
             )
             
             Spacer(modifier = Modifier.height(32.dp))
 
-            // Current Schedules List
             Box(modifier = Modifier.weight(1f)) {
                 if (schedules.isEmpty()) {
                     Column(
@@ -149,9 +110,9 @@ class MainActivity : ComponentActivity() {
                         verticalArrangement = Arrangement.Center,
                         horizontalAlignment = Alignment.CenterHorizontally
                     ) {
-                        Icon(Icons.Default.Schedule, contentDescription = null, tint = Color.White.copy(alpha = 0.3f), modifier = Modifier.size(64.dp))
+                        Icon(Icons.Default.NotificationsActive, contentDescription = null, tint = Color.White.copy(alpha = 0.3f), modifier = Modifier.size(64.dp))
                         Spacer(modifier = Modifier.height(16.dp))
-                        Text("点击下方按钮添加播报计划", color = Color.White.copy(alpha = 0.5f))
+                        Text("点击下方按钮设置您的第一个播报计划", color = Color.White.copy(alpha = 0.5f))
                     }
                 } else {
                     LazyColumn(
@@ -160,8 +121,9 @@ class MainActivity : ComponentActivity() {
                     ) {
                         items(schedules) { schedule ->
                             ScheduleItem(schedule = schedule, onDelete = {
-                                cancelWeatherTask(schedule.hour, schedule.minute)
+                                cancelAlarm(this@MainActivity, schedule)
                                 schedules.remove(schedule)
+                                AlarmStorage.saveSchedules(this@MainActivity, schedules.toList())
                             })
                         }
                     }
@@ -178,15 +140,14 @@ class MainActivity : ComponentActivity() {
             ) {
                 Icon(Icons.Default.Add, contentDescription = null)
                 Spacer(modifier = Modifier.width(8.dp))
-                Text("新增播报时段", fontWeight = FontWeight.Bold, fontSize = 18.sp)
+                Text("新增精准播报", fontWeight = FontWeight.Bold, fontSize = 18.sp)
             }
         }
 
-        // Add Schedule Dialog
         if (showAddDialog) {
             var showCitySelector by remember { mutableStateOf(false) }
             val scope = rememberCoroutineScope()
-            val context = this
+            val context = this@MainActivity
             val fusedLocationClient = remember { LocationServices.getFusedLocationProviderClient(context) }
             
             val locationPermissionLauncher = rememberLauncherForActivityResult(
@@ -195,31 +156,25 @@ class MainActivity : ComponentActivity() {
                 if (isGranted) {
                     scope.launch {
                         try {
-                            val result = fusedLocationClient.getCurrentLocation(
-                                Priority.PRIORITY_HIGH_ACCURACY,
-                                CancellationTokenSource().token
-                            )
-                            result.addOnSuccessListener { location ->
-                                location?.let {
-                                    val detectedCityName = getCityFromLocation(it.latitude, it.longitude)
-                                    tempCity = City(detectedCityName, it.latitude, it.longitude)
+                            fusedLocationClient.getCurrentLocation(Priority.PRIORITY_HIGH_ACCURACY, CancellationTokenSource().token)
+                                .addOnSuccessListener { location ->
+                                    location?.let {
+                                        val detectedCityName = getCityFromLocation(it.latitude, it.longitude)
+                                        tempCity = City(detectedCityName, it.latitude, it.longitude)
+                                    }
                                 }
-                            }
-                        } catch (e: Exception) {
-                            // Handle error
-                        }
+                        } catch (e: Exception) {}
                     }
                 }
             }
 
             AlertDialog(
                 onDismissRequest = { showAddDialog = false },
-                title = { Text("新增播报") },
+                title = { Text("新增播报时段") },
                 text = {
                     Column {
                         TimePicker(state = timePickerState)
                         Spacer(modifier = Modifier.height(16.dp))
-                        
                         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             OutlinedButton(
                                 onClick = { showCitySelector = true },
@@ -229,40 +184,32 @@ class MainActivity : ComponentActivity() {
                                 Spacer(modifier = Modifier.width(4.dp))
                                 Text(tempCity.name, maxLines = 1)
                             }
-                            
-                            IconButton(
-                                onClick = {
-                                    if (ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED) {
-                                        fusedLocationClient.getCurrentLocation(Priority.PRIORITY_HIGH_ACCURACY, CancellationTokenSource().token)
-                                            .addOnSuccessListener { location ->
-                                                location?.let {
-                                                    val name = getCityFromLocation(it.latitude, it.longitude)
-                                                    tempCity = City(name, it.latitude, it.longitude)
-                                                }
+                            IconButton(onClick = {
+                                if (ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED) {
+                                    fusedLocationClient.getCurrentLocation(Priority.PRIORITY_HIGH_ACCURACY, CancellationTokenSource().token)
+                                        .addOnSuccessListener { location ->
+                                            location?.let {
+                                                val name = getCityFromLocation(it.latitude, it.longitude)
+                                                tempCity = City(name, it.latitude, it.longitude)
                                             }
-                                    } else {
-                                        locationPermissionLauncher.launch(Manifest.permission.ACCESS_FINE_LOCATION)
-                                    }
-                                },
-                                colors = IconButtonDefaults.filledIconButtonColors(containerColor = MaterialTheme.colorScheme.primaryContainer)
-                            ) {
-                                Icon(Icons.Default.MyLocation, contentDescription = "定位")
+                                        }
+                                } else {
+                                    locationPermissionLauncher.launch(Manifest.permission.ACCESS_FINE_LOCATION)
+                                }
+                            }) {
+                                Icon(Icons.Default.MyLocation, contentDescription = null)
                             }
                         }
                     }
                 },
                 confirmButton = {
                     TextButton(onClick = {
-                        val newSchedule = AlarmSchedule(
-                            UUID.randomUUID().toString(),
-                            timePickerState.hour,
-                            timePickerState.minute,
-                            tempCity
-                        )
+                        val newSchedule = AlarmSchedule(UUID.randomUUID().toString(), timePickerState.hour, timePickerState.minute, tempCity)
                         schedules.add(newSchedule)
-                        scheduleWeatherTask(newSchedule.hour, newSchedule.minute, newSchedule.city)
+                        setAlarm(this@MainActivity, newSchedule)
+                        AlarmStorage.saveSchedules(this@MainActivity, schedules.toList())
                         showAddDialog = false
-                    }) { Text("添加") }
+                    }) { Text("保存") }
                 },
                 dismissButton = {
                     TextButton(onClick = { showAddDialog = false }) { Text("取消") }
@@ -299,10 +246,7 @@ class MainActivity : ComponentActivity() {
             shape = RoundedCornerShape(16.dp),
             colors = CardDefaults.cardColors(containerColor = Color.White.copy(alpha = 0.15f))
         ) {
-            Row(
-                modifier = Modifier.padding(16.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
+            Row(modifier = Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
                         text = String.format("%02d:%02d", schedule.hour, schedule.minute),
@@ -310,11 +254,7 @@ class MainActivity : ComponentActivity() {
                         fontSize = 24.sp,
                         fontWeight = FontWeight.Bold
                     )
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Default.LocationOn, contentDescription = null, tint = Color.White.copy(alpha = 0.6f), modifier = Modifier.size(14.dp))
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text(schedule.city.name, color = Color.White.copy(alpha = 0.6f), fontSize = 14.sp)
-                    }
+                    Text(schedule.city.name, color = Color.White.copy(alpha = 0.6f), fontSize = 14.sp)
                 }
                 IconButton(onClick = onDelete) {
                     Icon(Icons.Default.Delete, contentDescription = null, tint = Color.Red.copy(alpha = 0.7f))
@@ -327,10 +267,7 @@ class MainActivity : ComponentActivity() {
 @Composable
 fun WeatherAppTheme(content: @Composable () -> Unit) {
     MaterialTheme(
-        colorScheme = darkColorScheme(
-            primary = Color(0xFF4FC3F7),
-            surface = Color(0xFF1E3C72)
-        ),
+        colorScheme = darkColorScheme(primary = Color(0xFF4FC3F7), surface = Color(0xFF1E3C72)),
         content = content
     )
 }
