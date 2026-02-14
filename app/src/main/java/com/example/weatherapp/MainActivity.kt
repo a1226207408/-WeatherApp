@@ -2,6 +2,8 @@ package com.example.weatherapp
 
 import android.os.Bundle
 import android.app.AlarmManager
+import android.app.NotificationChannel
+import android.app.NotificationManager
 import android.content.Intent
 import android.provider.Settings
 import android.os.Build
@@ -58,11 +60,26 @@ class MainActivity : ComponentActivity() {
         
         // Request Notifications and Exact Alarm permissions for Android 13+
         requestCriticalPermissions()
+        // Ensure notification channel exists for background alarms
+        createNotificationChannel()
         
         setContent {
             WeatherAppTheme {
                 WeatherDashboard()
             }
+        }
+    }
+
+    private fun createNotificationChannel() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val name = "天气播报服务"
+            val descriptionText = "确保天气闹钟在后台准时运行"
+            val importance = NotificationManager.IMPORTANCE_HIGH
+            val channel = NotificationChannel("WeatherBroadcastChannel", name, importance).apply {
+                description = descriptionText
+            }
+            val notificationManager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            notificationManager.createNotificationChannel(channel)
         }
     }
 
