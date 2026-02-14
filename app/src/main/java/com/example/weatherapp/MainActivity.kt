@@ -10,7 +10,10 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.LocationOn
+import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -25,6 +28,7 @@ import java.util.concurrent.TimeUnit
 import java.util.*
 
 data class City(val name: String, val lat: Double, val lon: Double)
+data class AlarmSchedule(val id: String, val hour: Int, val minute: Int, val city: City)
 
 val presetCities = listOf(
     City("北京", 39.9042, 116.4074),
@@ -60,170 +64,193 @@ class MainActivity : ComponentActivity() {
         }
 
         val timeDiff = dueDate.timeInMillis - currentDate.timeInMillis
+        val cityData = workDataOf("cityName" to city.name, "lat" to city.lat, "lon" to city.lon)
 
-        val cityData = workDataOf(
-            "cityName" to city.name,
-            "lat" to city.lat,
-            "lon" to city.lon
-        )
-
+        val uniqueName = "WeatherAlarm_${hour}_${minute}"
+        
         val weatherRequest = PeriodicWorkRequestBuilder<WeatherWorker>(24, TimeUnit.HOURS)
             .setInitialDelay(timeDiff, TimeUnit.MILLISECONDS)
             .setInputData(cityData)
-            .setConstraints(
-                Constraints.Builder()
-                    .setRequiredNetworkType(NetworkType.CONNECTED)
-                    .build()
-            )
-            .addTag("DailyWeatherBroadcast")
+            .setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build())
+            .addTag("WeatherAlarm")
             .build()
 
         WorkManager.getInstance(applicationContext).enqueueUniquePeriodicWork(
-            "DailyWeatherBroadcast",
+            uniqueName,
             ExistingPeriodicWorkPolicy.REPLACE,
             weatherRequest
         )
     }
 
+    private fun cancelWeatherTask(hour: Int, minute: Int) {
+        val uniqueName = "WeatherAlarm_${hour}_${minute}"
+        WorkManager.getInstance(applicationContext).cancelUniqueWork(uniqueName)
+    }
+
     @OptIn(ExperimentalMaterial3Api::class)
     @Composable
     fun WeatherDashboard() {
-        var selectedHour by remember { mutableIntStateOf(8) }
-        var selectedMinute by remember { mutableIntStateOf(0) }
-        var selectedCity by remember { mutableStateOf(presetCities[0]) }
+        val schedules = remember { mutableStateListOf<AlarmSchedule>() }
+        var showAddDialog by remember { mutableStateOf(false) }
         
-        val timePickerState = rememberTimePickerState(initialHour = selectedHour, initialMinute = selectedMinute)
-        var showTimeDialog by remember { mutableStateOf(false) }
-        var showCityDialog by remember { mutableStateOf(false) }
+        var tempHour by remember { mutableIntStateOf(8) }
+        var tempMinute by remember { mutableIntStateOf(0) }
+        var tempCity by remember { mutableStateOf(presetCities[0]) }
+        val timePickerState = rememberTimePickerState(initialHour = 8, initialMinute = 0)
 
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .background(
-                    Brush.verticalGradient(
-                        colors = listOf(Color(0xFF1E3C72), Color(0xFF2A5298))
-                    )
-                )
+                .background(Brush.verticalGradient(colors = listOf(Color(0xFF1E3C72), Color(0xFF2A5298))))
                 .padding(24.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             Text(
-                text = "智能天气闹钟",
+                text = "智能播报管家",
                 color = Color.White,
-                fontSize = 32.sp,
+                fontSize = 28.sp,
                 fontWeight = FontWeight.Bold,
-                modifier = Modifier.padding(top = 40.dp, bottom = 8.dp)
+                modifier = Modifier.padding(top = 40.dp, bottom = 4.dp)
+            )
+            Text(
+                text = "支持设置多个播报时段",
+                color = Color.White.copy(alpha = 0.6f),
+                fontSize = 14.sp
             )
             
             Spacer(modifier = Modifier.height(32.dp))
 
-            // City Selection Card
-            Card(
-                modifier = Modifier.fillMaxWidth().clickable { showCityDialog = true },
-                shape = RoundedCornerShape(16.dp),
-                colors = CardDefaults.cardColors(containerColor = Color.White.copy(alpha = 0.15f))
-            ) {
-                Row(
-                    modifier = Modifier.padding(20.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Icon(Icons.Default.LocationOn, contentDescription = null, tint = Color.White)
-                    Spacer(modifier = Modifier.width(12.dp))
-                    Column {
-                        Text("当前选择城市", color = Color.White.copy(alpha = 0.6f), fontSize = 12.sp)
-                        Text(selectedCity.name, color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.Bold)
-                    }
-                }
-            }
-
-            Spacer(modifier = Modifier.height(20.dp))
-
-            // Time Selection Card
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(24.dp),
-                colors = CardDefaults.cardColors(containerColor = Color.White.copy(alpha = 0.1f))
-            ) {
-                Column(
-                    modifier = Modifier.padding(24.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally
-                ) {
-                    Text("提醒时间", color = Color.White.copy(alpha = 0.7f), fontSize = 16.sp)
-                    
-                    Text(
-                        text = String.format("%02d:%02d", timePickerState.hour, timePickerState.minute),
-                        color = Color.White,
-                        fontSize = 72.sp,
-                        fontWeight = FontWeight.Light,
-                        modifier = Modifier.clickable { showTimeDialog = true }
-                    )
-
-                    Button(
-                        onClick = {
-                            scheduleWeatherTask(timePickerState.hour, timePickerState.minute, selectedCity)
-                        },
-                        modifier = Modifier.fillMaxWidth(),
-                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF4FC3F7)),
-                        shape = RoundedCornerShape(12.dp)
+            // Current Schedules List
+            Box(modifier = Modifier.weight(1f)) {
+                if (schedules.isEmpty()) {
+                    Column(
+                        modifier = Modifier.fillMaxSize(),
+                        verticalArrangement = Arrangement.Center,
+                        horizontalAlignment = Alignment.CenterHorizontally
                     ) {
-                        Text("保存每日闹钟", color = Color.White, fontWeight = FontWeight.Bold)
+                        Icon(Icons.Default.Schedule, contentDescription = null, tint = Color.White.copy(alpha = 0.3f), modifier = Modifier.size(64.dp))
+                        Spacer(modifier = Modifier.height(16.dp))
+                        Text("点击下方按钮添加播报计划", color = Color.White.copy(alpha = 0.5f))
+                    }
+                } else {
+                    LazyColumn(
+                        verticalArrangement = Arrangement.spacedBy(12.dp),
+                        modifier = Modifier.fillMaxSize()
+                    ) {
+                        items(schedules) { schedule ->
+                            ScheduleItem(schedule = schedule, onDelete = {
+                                cancelWeatherTask(schedule.hour, schedule.minute)
+                                schedules.remove(schedule)
+                            })
+                        }
                     }
                 }
             }
 
-            Spacer(modifier = Modifier.height(24.dp))
+            Spacer(modifier = Modifier.height(16.dp))
 
-            OutlinedButton(
-                onClick = {
-                    val cityData = workDataOf(
-                        "cityName" to selectedCity.name,
-                        "lat" to selectedCity.lat,
-                        "lon" to selectedCity.lon
-                    )
-                    val oneTimeRequest = OneTimeWorkRequestBuilder<WeatherWorker>()
-                        .setInputData(cityData)
-                        .setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
-                        .build()
-                    WorkManager.getInstance(applicationContext).enqueue(oneTimeRequest)
-                },
-                modifier = Modifier.fillMaxWidth(),
-                colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White)
+            Button(
+                onClick = { showAddDialog = true },
+                modifier = Modifier.fillMaxWidth().height(56.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF4FC3F7)),
+                shape = RoundedCornerShape(16.dp)
             ) {
-                Text("立即测试播报", fontWeight = FontWeight.SemiBold)
+                Icon(Icons.Default.Add, contentDescription = null)
+                Spacer(modifier = Modifier.width(8.dp))
+                Text("新增播报时段", fontWeight = FontWeight.Bold, fontSize = 18.sp)
             }
         }
 
-        // Time Picker Dialog
-        if (showTimeDialog) {
+        // Add Schedule Dialog
+        if (showAddDialog) {
+            var showCitySelector by remember { mutableStateOf(false) }
+            
             AlertDialog(
-                onDismissRequest = { showTimeDialog = false },
-                confirmButton = {
-                    TextButton(onClick = { showTimeDialog = false }) { Text("确定") }
-                },
-                text = { TimePicker(state = timePickerState) }
-            )
-        }
-
-        // City Selector Dialog
-        if (showCityDialog) {
-            AlertDialog(
-                onDismissRequest = { showCityDialog = false },
-                title = { Text("选择播报城市") },
+                onDismissRequest = { showAddDialog = false },
+                title = { Text("新增播报") },
                 text = {
-                    LazyColumn {
-                        items(presetCities) { city ->
-                            ListItem(
-                                headlineContent = { Text(city.name) },
-                                modifier = Modifier.clickable {
-                                    selectedCity = city
-                                    showCityDialog = false
-                                }
-                            )
+                    Column {
+                        TimePicker(state = timePickerState)
+                        Spacer(modifier = Modifier.height(16.dp))
+                        OutlinedButton(
+                            onClick = { showCitySelector = true },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Icon(Icons.Default.LocationOn, contentDescription = null)
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text("城市: ${tempCity.name}")
                         }
                     }
                 },
-                confirmButton = {}
+                confirmButton = {
+                    TextButton(onClick = {
+                        val newSchedule = AlarmSchedule(
+                            UUID.randomUUID().toString(),
+                            timePickerState.hour,
+                            timePickerState.minute,
+                            tempCity
+                        )
+                        schedules.add(newSchedule)
+                        scheduleWeatherTask(newSchedule.hour, newSchedule.minute, newSchedule.city)
+                        showAddDialog = false
+                    }) { Text("添加") }
+                },
+                dismissButton = {
+                    TextButton(onClick = { showAddDialog = false }) { Text("取消") }
+                }
             )
+
+            if (showCitySelector) {
+                AlertDialog(
+                    onDismissRequest = { showCitySelector = false },
+                    title = { Text("选择城市") },
+                    text = {
+                        LazyColumn {
+                            items(presetCities) { city ->
+                                ListItem(
+                                    headlineContent = { Text(city.name) },
+                                    modifier = Modifier.clickable {
+                                        tempCity = city
+                                        showCitySelector = false
+                                    }
+                                )
+                            }
+                        }
+                    },
+                    confirmButton = {}
+                )
+            }
+        }
+    }
+
+    @Composable
+    fun ScheduleItem(schedule: AlarmSchedule, onDelete: () -> Unit) {
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(16.dp),
+            colors = CardDefaults.cardColors(containerColor = Color.White.copy(alpha = 0.15f))
+        ) {
+            Row(
+                modifier = Modifier.padding(16.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = String.format("%02d:%02d", schedule.hour, schedule.minute),
+                        color = Color.White,
+                        fontSize = 24.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Default.LocationOn, contentDescription = null, tint = Color.White.copy(alpha = 0.6f), modifier = Modifier.size(14.dp))
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text(schedule.city.name, color = Color.White.copy(alpha = 0.6f), fontSize = 14.sp)
+                    }
+                }
+                IconButton(onClick = onDelete) {
+                    Icon(Icons.Default.Delete, contentDescription = null, tint = Color.Red.copy(alpha = 0.7f))
+                }
+            }
         }
     }
 }
