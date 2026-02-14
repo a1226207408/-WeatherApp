@@ -82,7 +82,9 @@ class WeatherWorker(context: Context, params: WorkerParameters) : CoroutineWorke
         val content = "正在为您获取并播报今日天气..."
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val channel = NotificationChannel(CHANNEL_ID, "天气播报服务", NotificationManager.IMPORTANCE_LOW)
+            val channel = NotificationChannel(CHANNEL_ID, "天气播报服务", NotificationManager.IMPORTANCE_HIGH).apply {
+                description = "每日天气语音播报提醒"
+            }
             val manager = applicationContext.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
             manager.createNotificationChannel(channel)
         }
@@ -91,6 +93,8 @@ class WeatherWorker(context: Context, params: WorkerParameters) : CoroutineWorke
             .setContentTitle(title)
             .setContentText(content)
             .setSmallIcon(android.R.drawable.ic_dialog_info)
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setCategory(NotificationCompat.CATEGORY_ALARM)
             .setOngoing(true)
             .build()
 

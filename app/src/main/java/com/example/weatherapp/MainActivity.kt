@@ -1,6 +1,11 @@
 package com.example.weatherapp
 
 import android.os.Bundle
+import android.app.AlarmManager
+import android.content.Intent
+import android.provider.Settings
+import android.os.Build
+import android.content.Context
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.background
@@ -21,8 +26,10 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.work.*
+import com.google.android.gms.location.LocationServices
+import com.google.android.gms.location.Priority
+import com.google.android.gms.tasks.CancellationTokenSource
 import android.Manifest
-import android.content.Context
 import android.content.pm.PackageManager
 import android.location.Geocoder
 import android.location.LocationManager
@@ -51,6 +58,10 @@ val presetCities = listOf(
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        
+        // Request Notifications and Exact Alarm permissions for Android 13+
+        requestCriticalPermissions()
+        
         setContent {
             WeatherAppTheme {
                 WeatherDashboard()
@@ -58,11 +69,27 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    private fun requestCriticalPermissions() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            if (ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+                requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 1001)
+            }
+        }
+        
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            val alarmManager = getSystemService(Context.ALARM_SERVICE) as AlarmManager
+            if (!alarmManager.canScheduleExactAlarms()) {
+                try {
+                    val intent = Intent(Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM)
+                    startActivity(intent)
+                } catch (e: Exception) {}
+            }
+        }
+    }
+
     private fun getCityFromLocation(lat: Double, lon: Double): String {
         return try {
             val geocoder = Geocoder(this, Locale.CHINA)
-            // Note: On some devices in China, Geocoder might fail if Google integration is broken.
-            // But usually, domestic ROMs (Xiaomi/Huawei) provide their own backend.
             val addresses = geocoder.getFromLocation(lat, lon, 1)
             if (!addresses.isNullOrEmpty()) {
                 val address = addresses[0]
@@ -257,27 +284,21 @@ class MainActivity : ComponentActivity() {
 
         if (provider != null) {
             try {
-                // Try to get last known location first for speed
                 val lastKnown = locationManager.getLastKnownLocation(provider)
                 if (lastKnown != null) {
                     val name = getCityFromLocation(lastKnown.latitude, lastKnown.longitude)
                     onCityDetected(City(name, lastKnown.latitude, lastKnown.longitude))
                 }
 
-                // Request one fresh update
                 locationManager.requestLocationUpdates(provider, 0L, 0f, object : LocationListener {
                     override fun onLocationChanged(location: Location) {
                         val name = getCityFromLocation(location.latitude, location.longitude)
-                        onCityDetected(City(name, location.latitude, location.longitude))
+                        onCityDetected(City(name, location.latitude, location.longitude) )
                         locationManager.removeUpdates(this)
                     }
                     override fun onStatusChanged(p0: String?, p1: Int, p2: Bundle?) {}
-                    override fun onProviderEnabled(p0: String) {}
-                    override fun onProviderDisabled(p0: String) {}
                 })
-            } catch (e: SecurityException) {
-                // Handle permission issue
-            }
+            } catch (e: SecurityException) {}
         }
     }
 
