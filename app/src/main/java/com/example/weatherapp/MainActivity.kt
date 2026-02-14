@@ -24,8 +24,19 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.work.*
+import com.google.android.gms.location.LocationServices
+import com.google.android.gms.location.Priority
+import com.google.android.gms.tasks.CancellationTokenSource
+import android.Manifest
+import android.content.pm.PackageManager
+import android.location.Geocoder
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.material.icons.filled.MyLocation
+import androidx.core.content.ContextCompat
 import java.util.concurrent.TimeUnit
 import java.util.*
+import kotlinx.coroutines.launch
 
 data class City(val name: String, val lat: Double, val lon: Double)
 data class AlarmSchedule(val id: String, val hour: Int, val minute: Int, val city: City)
@@ -80,6 +91,16 @@ class MainActivity : ComponentActivity() {
             ExistingPeriodicWorkPolicy.REPLACE,
             weatherRequest
         )
+    }
+
+    private fun getCityFromLocation(lat: Double, lon: Double): String {
+        return try {
+            val geocoder = Geocoder(this, Locale.CHINA)
+            val addresses = geocoder.getFromLocation(lat, lon, 1)
+            addresses?.get(0)?.locality ?: addresses?.get(0)?.subAdminArea ?: "当前位置"
+        } catch (e: Exception) {
+            "当前位置"
+        }
     }
 
     private fun cancelWeatherTask(hour: Int, minute: Int) {
@@ -164,7 +185,33 @@ class MainActivity : ComponentActivity() {
         // Add Schedule Dialog
         if (showAddDialog) {
             var showCitySelector by remember { mutableStateOf(false) }
+            val scope = rememberCoroutineScope()
+            val context = this
+            val fusedLocationClient = remember { LocationServices.getFusedLocationProviderClient(context) }
             
+            val locationPermissionLauncher = rememberLauncherForActivityResult(
+                ActivityResultContracts.RequestPermission()
+            ) { isGranted ->
+                if (isGranted) {
+                    scope.launch {
+                        try {
+                            val result = fusedLocationClient.getCurrentLocation(
+                                Priority.PRIORITY_HIGH_ACCURACY,
+                                CancellationTokenSource().token
+                            )
+                            result.addOnSuccessListener { location ->
+                                location?.let {
+                                    val detectedCityName = getCityFromLocation(it.latitude, it.longitude)
+                                    tempCity = City(detectedCityName, it.latitude, it.longitude)
+                                }
+                            }
+                        } catch (e: Exception) {
+                            // Handle error
+                        }
+                    }
+                }
+            }
+
             AlertDialog(
                 onDismissRequest = { showAddDialog = false },
                 title = { Text("新增播报") },
@@ -172,13 +219,35 @@ class MainActivity : ComponentActivity() {
                     Column {
                         TimePicker(state = timePickerState)
                         Spacer(modifier = Modifier.height(16.dp))
-                        OutlinedButton(
-                            onClick = { showCitySelector = true },
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Icon(Icons.Default.LocationOn, contentDescription = null)
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text("城市: ${tempCity.name}")
+                        
+                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            OutlinedButton(
+                                onClick = { showCitySelector = true },
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Icon(Icons.Default.LocationOn, contentDescription = null)
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text(tempCity.name, maxLines = 1)
+                            }
+                            
+                            IconButton(
+                                onClick = {
+                                    if (ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED) {
+                                        fusedLocationClient.getCurrentLocation(Priority.PRIORITY_HIGH_ACCURACY, CancellationTokenSource().token)
+                                            .addOnSuccessListener { location ->
+                                                location?.let {
+                                                    val name = getCityFromLocation(it.latitude, it.longitude)
+                                                    tempCity = City(name, it.latitude, it.longitude)
+                                                }
+                                            }
+                                    } else {
+                                        locationPermissionLauncher.launch(Manifest.permission.ACCESS_FINE_LOCATION)
+                                    }
+                                },
+                                colors = IconButtonDefaults.filledIconButtonColors(containerColor = MaterialTheme.colorScheme.primaryContainer)
+                            ) {
+                                Icon(Icons.Default.MyLocation, contentDescription = "定位")
+                            }
                         }
                     }
                 },
