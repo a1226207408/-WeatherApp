@@ -50,7 +50,7 @@ class WeatherWorker(context: Context, params: WorkerParameters) : CoroutineWorke
             val weather = response.current_weather
             val description = getWeatherDescription(weather.weathercode)
             
-            val text = "早安！现在为您播报天气。当前位置：$cityName，天气$description，温度约为${weather.temperature}度。祝您今天在$cityName拥有一份好心情！"
+            val text = "早安！现在为您播报天气。当前位置：${cityName}，天气${description}，温度约为${weather.temperature}度。祝您今天在${cityName}拥有一份好心情！"
 
             speakSync(text)
             
