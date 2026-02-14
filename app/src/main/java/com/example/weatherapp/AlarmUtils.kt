@@ -34,9 +34,16 @@ fun setAlarm(context: Context, schedule: AlarmSchedule) {
     // Check if we can schedule exact alarms (Android 12+)
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
         if (!alarmManager.canScheduleExactAlarms()) {
-            val intent = Intent(Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM)
-            context.startActivity(intent)
-            return
+            try {
+                val intent = Intent(Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM).apply {
+                    flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                }
+                context.startActivity(intent)
+            } catch (e: Exception) {
+                // Background start might fail on some OEMs
+            }
+            // Even if we can't schedule "exact", we should still try to set an alarm
+            // or we just return. For an alarm app, exact is better.
         }
     }
 
@@ -46,6 +53,7 @@ fun setAlarm(context: Context, schedule: AlarmSchedule) {
         putExtra("lon", schedule.city.lon)
         putExtra("hour", schedule.hour)
         putExtra("minute", schedule.minute)
+        putExtra("alarmId", schedule.id.hashCode())
     }
 
     val pendingIntent = PendingIntent.getBroadcast(
